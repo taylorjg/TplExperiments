@@ -1,4 +1,6 @@
-﻿using System.Threading.Tasks;
+﻿using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using NUnit.Framework;
 
 namespace TplTests
@@ -52,6 +54,39 @@ namespace TplTests
             Task.WaitAll(task1, task2);
             var actual = task1.Result + task2.Result;
             Assert.That(actual, Is.EqualTo(12 + 13));
+        }
+
+        [Test]
+        public void RunningTasksInParallelAndCombiningTheResults()
+        {
+            var enumerable = Enumerable.Range(1, 10);
+            var tasks = new List<Task<IList<string>>>();
+
+            // ReSharper disable LoopCanBeConvertedToQuery
+            foreach (var num in enumerable)
+            {
+                var copyOfNum = num;
+                var task = Task<IList<string>>.Factory.StartNew(() => MakeStrings(copyOfNum));
+                tasks.Add(task);
+            }
+            // ReSharper restore LoopCanBeConvertedToQuery
+
+            Task.WaitAll(tasks.Cast<Task>().ToArray());
+
+            var combinedResults = tasks.SelectMany(t => t.Result);
+            Assert.That(combinedResults.Count(), Is.EqualTo(55));
+        }
+
+        private static IList<string> MakeStrings(int numStrings)
+        {
+            var result = new List<string>();
+
+            for (var i = 0; i < numStrings; i++)
+            {
+                result.Add(new string('*', numStrings));
+            }
+
+            return result;
         }
 
         // TODO: create a few tasks that return lists of things and combine the results
