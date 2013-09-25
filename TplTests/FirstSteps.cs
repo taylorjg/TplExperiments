@@ -44,6 +44,16 @@ namespace TplTests
             Assert.That(task.Result, Is.EqualTo(456));
         }
 
+        [Test]
+        public void StartTwoTasksThatReturnSomethingAndWaitForThem()
+        {
+            var task1 = Task<int>.Factory.StartNew(() => 12);
+            var task2 = Task<int>.Factory.StartNew(() => 13);
+            Task.WaitAll(task1, task2);
+            var actual = task1.Result + task2.Result;
+            Assert.That(actual, Is.EqualTo(12 + 13));
+        }
+
         // TODO: create a few tasks that return lists of things and combine the results
     }
 }
