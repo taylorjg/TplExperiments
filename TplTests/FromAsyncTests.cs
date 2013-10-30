@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
@@ -12,7 +13,7 @@ namespace TplTests
         [SetUp]
         public void SetUp()
         {
-            ServicePointManager.DefaultConnectionLimit = 10;
+            ServicePointManager.DefaultConnectionLimit = 100;
         }
 
         [Test]
@@ -64,8 +65,10 @@ namespace TplTests
                 ae.Handle(ex => ex is WebException);
             }
 
-            Assert.That(tasks[0].Status, Is.EqualTo(TaskStatus.RanToCompletion));
-            Assert.That(((HttpWebResponse)tasks[0].Result).StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            AssertTaskStatusAndHttpStatusCode(tasks, 0, TaskStatus.RanToCompletion, HttpStatusCode.OK);
+            AssertTaskStatusAndHttpStatusCode(tasks, 2, TaskStatus.RanToCompletion, HttpStatusCode.OK);
+            AssertTaskStatusAndHttpStatusCode(tasks, 3, TaskStatus.RanToCompletion, HttpStatusCode.OK);
+            AssertTaskStatusAndHttpStatusCode(tasks, 4, TaskStatus.RanToCompletion, HttpStatusCode.OK);
 
             Assert.That(tasks[1].Status, Is.EqualTo(TaskStatus.Faulted));
             // ReSharper disable PossibleNullReferenceException
@@ -75,15 +78,80 @@ namespace TplTests
             // ReSharper restore PossibleNullReferenceException
             var webResponse = (HttpWebResponse)((WebException)tasks[1].Exception.InnerException).Response;
             Assert.That(webResponse.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        }
 
-            Assert.That(tasks[2].Status, Is.EqualTo(TaskStatus.RanToCompletion));
-            Assert.That(((HttpWebResponse)tasks[0].Result).StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        [Test]
+        public async void SingleWebRequestUsingAsyncAwait()
+        {
+            var task = WebRequest.Create("http://ao.com").GetResponseAsync();
+            var webResponse = await task;
+            var httpWebResponse = (HttpWebResponse) webResponse;
+            Assert.That(httpWebResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        }
 
-            Assert.That(tasks[3].Status, Is.EqualTo(TaskStatus.RanToCompletion));
-            Assert.That(((HttpWebResponse)tasks[0].Result).StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        [Test]
+        public async void MultipleWebRequestsUsingAsyncAwait()
+        {
+            // Arrange
+            var tasks = Enumerable.Range(0, 5).Select(_ => WebRequest.Create("http://google.com").GetResponseAsync());
 
-            Assert.That(tasks[4].Status, Is.EqualTo(TaskStatus.RanToCompletion));
-            Assert.That(((HttpWebResponse)tasks[0].Result).StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            // Act
+            var webResponses = await Task.WhenAll(tasks);
+
+            // Assert
+            foreach (var httpWebResponse in webResponses.Cast<HttpWebResponse>())
+            {
+                Assert.That(httpWebResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            }
+        }
+
+        [Test]
+        public async void MultipleWebRequestsIncludingOneThatWillFailUsingAsyncAwait()
+        {
+            // Arrange
+            var urls = new[]
+                {
+                    "http://ao.com",
+                    "http://bbc.co.uk/banana",
+                    "http://ao.com",
+                    "http://ao.com",
+                    "http://ao.com"
+                };
+
+            var tasks = urls.Select(url => WebRequest.Create(url).GetResponseAsync()).ToList();
+
+            // Act
+            try
+            {
+                await Task.WhenAll(tasks);
+            }
+            catch (WebException)
+            {
+            }
+
+            // Assert
+            AssertTaskStatusAndHttpStatusCode(tasks, 0, TaskStatus.RanToCompletion, HttpStatusCode.OK);
+            AssertTaskStatusAndHttpStatusCode(tasks, 2, TaskStatus.RanToCompletion, HttpStatusCode.OK);
+            AssertTaskStatusAndHttpStatusCode(tasks, 3, TaskStatus.RanToCompletion, HttpStatusCode.OK);
+            AssertTaskStatusAndHttpStatusCode(tasks, 4, TaskStatus.RanToCompletion, HttpStatusCode.OK);
+
+            var faultedTask = tasks[1];
+            Assert.That(faultedTask.Status, Is.EqualTo(TaskStatus.Faulted));
+            // ReSharper disable PossibleNullReferenceException
+            Assert.That(faultedTask.Exception, Is.Not.Null);
+            Assert.That(faultedTask.Exception.InnerException, Is.Not.Null);
+            Assert.That(faultedTask.Exception.InnerException, Is.InstanceOf<WebException>());
+            // ReSharper restore PossibleNullReferenceException
+            var webResponse = (HttpWebResponse)((WebException)faultedTask.Exception.InnerException).Response;
+            Assert.That(webResponse.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        }
+
+        private static void AssertTaskStatusAndHttpStatusCode(IList<Task<WebResponse>> tasks, int taskIndex, TaskStatus taskStatus, HttpStatusCode httpStatusCode)
+        {
+            Assert.That(tasks[taskIndex].Status, Is.EqualTo(taskStatus));
+            var webResponse = tasks[taskIndex].Result;
+            var httpWebResponse = (HttpWebResponse) webResponse;
+            Assert.That(httpWebResponse.StatusCode, Is.EqualTo(httpStatusCode));
         }
     }
 }
