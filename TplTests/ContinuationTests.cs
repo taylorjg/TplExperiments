@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Threading.Tasks;
 using NUnit.Framework;
@@ -47,20 +48,8 @@ namespace TplTests
                         return Tuple.Create(ServerState.Unknown, exceptionMessage);
                     }
 
-                    var serverState = ServerState.Unknown;
-
                     var flags = Tuple.Create(result1.Item1.Value, result2.Item1.Value);
-
-                    if (flags.Equals(Tuple.Create(true, true)))
-                        serverState = ServerState.BothLoops;
-                    else if (flags.Equals(Tuple.Create(false, false)))
-                        serverState = ServerState.NoLoops;
-                    else if (flags.Equals(Tuple.Create(true, false)))
-                        serverState = ServerState.BigLoopOnly;
-                    else if (flags.Equals(Tuple.Create(false, true)))
-                        serverState = ServerState.LittleLoopOnly;
-
-                    return Tuple.Create(serverState, null as string);
+                    return Tuple.Create(FlagsToServerState[flags], null as string);
                 });
 
             return continuation;
@@ -69,6 +58,15 @@ namespace TplTests
         private readonly string _serverIpAddress;
         private readonly string _hostHeader;
         private readonly bool _bigLoopOnly;
+
+        private static readonly Dictionary<Tuple<bool, bool>, ServerState> FlagsToServerState = new Dictionary
+            <Tuple<bool, bool>, ServerState>
+            {
+                {Tuple.Create(true, true), ServerState.BothLoops},
+                {Tuple.Create(false, false), ServerState.NoLoops},
+                {Tuple.Create(true, false), ServerState.BigLoopOnly},
+                {Tuple.Create(false, true), ServerState.LittleLoopOnly}
+            };
     }
 
     internal class LoopFileChecker
@@ -151,7 +149,7 @@ namespace TplTests
         }
 
         [Test]
-        public void Test1()
+        public void LoopFileChecker_GivenVariousScenarios_ReturnsCorrectResults()
         {
             var loopFileChecker1 = new LoopFileChecker(ServerInBigLoopOnly, HostHeader, BigLoopFileName);
             var loopFileChecker2 = new LoopFileChecker(ServerInBigLoopOnly, HostHeader, LittleLoopFileName);
@@ -224,6 +222,15 @@ namespace TplTests
             Assert.That(result.Item2, Is.StringStarting("The remote name could not be resolved"));
         }
 
-        // TODO: add a couple more tests re bigLoopOnly: true
+        [Test]
+        public void ServerStateChecker_ServerInLittleLoopOnlyButBigLoopOnlyFlagIsSet_ReturnsServerStateNoLoops()
+        {
+            var serverStateChecker = new ServerStateChecker(ServerInLittleLoopOnly, HostHeader, true);
+            var t = serverStateChecker.Task();
+            t.Wait();
+            var result = t.Result;
+            Assert.That(result.Item1, Is.EqualTo(ServerState.NoLoops));
+            Assert.That(result.Item2, Is.Null);
+        }
     }
 }
