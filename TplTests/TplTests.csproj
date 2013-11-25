@@ -52,6 +52,7 @@
     <Compile Include="AsyncAwaitTests.cs" />
     <Compile Include="FirstSteps.cs" />
     <Compile Include="FromAsyncTests.cs" />
+    <Compile Include="ContinuationTests.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
