@@ -141,6 +141,15 @@ namespace TplTests
         private const string FtpUserName = "env6ftp";
         private const string FtpPasssword = "w1nd0w5.";
 
+        private class UploadState
+        {
+            public string TargetDirectory { get; set; }
+            public FtpWebRequest FtpWebRequest { get; set; }
+            public FtpWebResponse FtpWebResponse { get; set; }
+            public Stream BufferStream { get; set; }
+            public Stream RequestStream { get; set; }
+        }
+
         public async Task CopyFiles(IEnumerable<string> fileNames, string sourceDirectory, IList<string> targetDirectories)
         {
             var tasks = new List<Task>();
@@ -163,28 +172,33 @@ namespace TplTests
 
                         foreach (var targetDirectory in targetDirectories)
                         {
-                            var localCopyOfTargetDirectory = targetDirectory;
-                            Stream requestStream = null;
                             var uploadFtpWebRequest = CreateFtpWebRequest(targetDirectory, fileName, WebRequestMethods.Ftp.UploadFile);
                             var uploadTask = uploadFtpWebRequest.GetRequestStreamAsync();
+                            var uploadState1 = new UploadState
+                                {
+                                    TargetDirectory = targetDirectory,
+                                    FtpWebRequest = uploadFtpWebRequest
+                                };
                             var overallUploadTask = uploadTask
-                                .ContinueWith(t =>
+                                .ContinueWith((t, s) =>
                                     {
-                                        requestStream = t.Result;
-                                        System.Diagnostics.Debug.WriteLine(string.Format("Starting to copy upload request stream... ({0})", localCopyOfTargetDirectory));
-                                        var bufferStream = new MemoryStream(buffer);
-                                        var copyToAsyncTask = bufferStream.CopyToAsync(requestStream);
-                                        System.Diagnostics.Debug.WriteLine(string.Format("Done copying upload request stream ({0})", localCopyOfTargetDirectory));
+                                        var uploadState2 = (UploadState) s;
+                                        uploadState2.RequestStream = t.Result;
+                                        uploadState2.BufferStream = new MemoryStream(buffer);
+                                        System.Diagnostics.Debug.WriteLine(string.Format("Starting to copy upload request stream... ({0})", uploadState2.TargetDirectory));
+                                        var copyToAsyncTask = uploadState2.BufferStream.CopyToAsync(uploadState2.RequestStream);
                                         return copyToAsyncTask;
-                                    }).ContinueWith(t =>
+                                    }, uploadState1).ContinueWith((t, s) =>
                                         {
-                                            if (requestStream != null)
+                                            var uploadState3 = (UploadState)s;
+                                            System.Diagnostics.Debug.WriteLine(string.Format("Done copying upload request stream ({0})", uploadState3.TargetDirectory));
+                                            if (uploadState3.RequestStream != null)
                                             {
-                                                requestStream.Close();
-                                                return uploadFtpWebRequest.GetRequestStreamAsync();
+                                                uploadState3.RequestStream.Close();
+                                                return uploadState3.FtpWebRequest.GetRequestStreamAsync();
                                             }
                                             return Task<Stream>.Factory.StartNew(() => null);
-                                        });
+                                        }, uploadState1);
                             tasks.Add(overallUploadTask);
                         }
                     }
