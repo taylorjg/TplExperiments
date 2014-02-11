@@ -86,61 +86,54 @@ namespace TplTests
 
     internal class BulkFtpCopyManager
     {
-        private const string FtpUserName = "";
-        private const string FtpPasssword = "";
+        private const string FtpHostName = "10.10.201.134";
+        private const string FtpUserName = "env6ftp";
+        private const string FtpPasssword = "w1nd0w5.";
 
-        public async Task CopyFiles(IEnumerable<string> fileNames, string sourceDirectory, IEnumerable<string> targetDirectories)
+        public async Task CopyFiles(IEnumerable<string> fileNames, string sourceDirectory, IList<string> targetDirectories)
         {
-            // init data structures
-            // for each targetDirectory
-            //  enqueue an async upload operation from sourceDirectory\filename to targetDirectory\filename
-            // end for
-            // wait for all async operations to complete
-
-            var targetDirectory = targetDirectories.First();
-
             foreach (var fileName in fileNames)
             {
-                var uri1 = "ftp://10.10.201.134/" + sourceDirectory + "/" + fileName;
-                var ftpWebRequest1 = (FtpWebRequest) WebRequest.Create(uri1);
-                ftpWebRequest1.Method = WebRequestMethods.Ftp.DownloadFile;
-                ftpWebRequest1.UseBinary = true;
-                ftpWebRequest1.KeepAlive = true;
-                ftpWebRequest1.ConnectionGroupName = "BulkFtpCopyingTests";
-                ftpWebRequest1.Credentials = new NetworkCredential(FtpUserName, FtpPasssword);
-
-                var destination = new MemoryStream();
-
-                using (var response1 = await ftpWebRequest1.GetResponseAsync())
+                var downloadFtpWebRequest = CreateFtpWebRequest(sourceDirectory, fileName, WebRequestMethods.Ftp.DownloadFile);
+                using (var downloadFtpWebResponse = await downloadFtpWebRequest.GetResponseAsync())
                 {
-                    using (var responseStream1 = response1.GetResponseStream())
+                    using (var downloadResponseStream = downloadFtpWebResponse.GetResponseStream())
                     {
                         System.Diagnostics.Debug.WriteLine("Starting to copy download response stream...");
-                        await responseStream1.CopyToAsync(destination);
+                        var destination = new MemoryStream();
+                        await downloadResponseStream.CopyToAsync(destination);
                         System.Diagnostics.Debug.WriteLine("Done copying download response stream");
 
-                        var uri2 = "ftp://10.10.201.134/" + targetDirectory + "/" + fileName;
-                        var ftpWebRequest2 = (FtpWebRequest)WebRequest.Create(uri2);
-                        ftpWebRequest2.Method = WebRequestMethods.Ftp.UploadFile;
-                        ftpWebRequest2.UseBinary = true;
-                        ftpWebRequest2.KeepAlive = true;
-                        ftpWebRequest2.ConnectionGroupName = "BulkFtpCopyingTests";
-                        ftpWebRequest2.Credentials = new NetworkCredential(FtpUserName, FtpPasssword);
-
-                        using (var requestStream2 = await ftpWebRequest2.GetRequestStreamAsync())
+                        foreach (var targetDirectory in targetDirectories)
                         {
-                            destination.Seek(0, SeekOrigin.Begin);
-                            System.Diagnostics.Debug.WriteLine("destination.Length: {0}", destination.Length);
+                            var uploadFtpWebRequest = CreateFtpWebRequest(targetDirectory, fileName, WebRequestMethods.Ftp.UploadFile);
+                            using (var uploadRequestStream = await uploadFtpWebRequest.GetRequestStreamAsync())
+                            {
+                                destination.Seek(0, SeekOrigin.Begin);
+                                System.Diagnostics.Debug.WriteLine("destination.Length: {0}", destination.Length);
 
-                            System.Diagnostics.Debug.WriteLine("Starting to copy upload request stream...");
-                            await destination.CopyToAsync(requestStream2);
-                            System.Diagnostics.Debug.WriteLine("Done copying upload request stream");
+                                System.Diagnostics.Debug.WriteLine("Starting to copy upload request stream...");
+                                await destination.CopyToAsync(uploadRequestStream);
+                                System.Diagnostics.Debug.WriteLine("Done copying upload request stream");
 
-                            await ftpWebRequest2.GetResponseAsync();
+                                await uploadFtpWebRequest.GetResponseAsync();
+                            }
                         }
                     }
                 }
             }
+        }
+
+        private static FtpWebRequest CreateFtpWebRequest(string directory, string fileName, string method)
+        {
+            var uri = string.Format("ftp://{0}/{1}/{2}", FtpHostName, directory, fileName);
+            var ftpWebRequest = (FtpWebRequest)WebRequest.Create(uri);
+            ftpWebRequest.Method = method;
+            ftpWebRequest.UseBinary = true;
+            ftpWebRequest.KeepAlive = true;
+            ftpWebRequest.ConnectionGroupName = "BulkFtpCopyingTests";
+            ftpWebRequest.Credentials = new NetworkCredential(FtpUserName, FtpPasssword);
+            return ftpWebRequest;
         }
     }
 }
