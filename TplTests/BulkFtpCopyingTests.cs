@@ -13,8 +13,14 @@ namespace TplTests
     {
         private static readonly Tuple<string, string> SourceDirectoryPair = Tuple.Create (@"LoopMonTest/SourceDir",  @"\\10.10.201.134\e$\HostEnvironments\LoopMonTest\SourceDir");
         private static readonly Tuple<string, string> TargetDirectoryPair1 = Tuple.Create(@"LoopMonTest/TargetDir1", @"\\10.10.201.134\e$\HostEnvironments\LoopMonTest\TargetDir1");
-        //private static readonly Tuple<string, string> TargetDirectoryPair2 = Tuple.Create(@"LoopMonTest/TargetDir2", @"\\10.10.201.134\e$\HostEnvironments\LoopMonTest\TargetDir2");
-        //private static readonly Tuple<string, string> TargetDirectoryPair3 = Tuple.Create(@"LoopMonTest/TargetDir3", @"\\10.10.201.134\e$\HostEnvironments\LoopMonTest\TargetDir3");
+        private static readonly Tuple<string, string> TargetDirectoryPair2 = Tuple.Create(@"LoopMonTest/TargetDir2", @"\\10.10.201.134\e$\HostEnvironments\LoopMonTest\TargetDir2");
+        private static readonly Tuple<string, string> TargetDirectoryPair3 = Tuple.Create(@"LoopMonTest/TargetDir3", @"\\10.10.201.134\e$\HostEnvironments\LoopMonTest\TargetDir3");
+
+        [SetUp]
+        public void SetUp()
+        {
+            ServicePointManager.DefaultConnectionLimit = 100;
+        }
 
         [Test]
         public async void CopyingOneFileToOneTargetDirectory()
@@ -37,10 +43,50 @@ namespace TplTests
 
             // Act
             DeleteAllFilesInDirectories(targetDirectoryUncPaths);
+            FudgedWaitForFileSystemToSettleDown();
+
             var bulkFtpCopyManager = new BulkFtpCopyManager();
+            System.Diagnostics.Debug.WriteLine("Calling bulkFtpCopyManager.CopyFiles...");
             await bulkFtpCopyManager.CopyFiles(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
+            System.Diagnostics.Debug.WriteLine("Returned from bulkFtpCopyManager.CopyFiles");
 
             // Assert
+            FudgedWaitForFileSystemToSettleDown();
+            AssertFilesHaveBeenCopiedCorrectly(fileNames, sourceDirectoryUncPath, targetDirectoryUncPaths);
+        }
+
+        [Test]
+        public async void CopyingOneFileToThreeTargetDirectories()
+        {
+            // Arrange
+            var fileNames = new[]
+                {
+                    "combined_Master_F217307845EECA800B75936A37BCA697.js"
+                };
+
+            var sourceDirectoryFtpPath = SourceDirectoryPair.Item1;
+            var sourceDirectoryUncPath = SourceDirectoryPair.Item2;
+
+            var targetDirectoryPairs = new[]
+                {
+                    TargetDirectoryPair1,
+                    TargetDirectoryPair2,
+                    TargetDirectoryPair3
+                };
+            var targetDirectoryFtpPaths = targetDirectoryPairs.Select(x => x.Item1).ToList();
+            var targetDirectoryUncPaths = targetDirectoryPairs.Select(x => x.Item2).ToList();
+
+            // Act
+            DeleteAllFilesInDirectories(targetDirectoryUncPaths);
+            FudgedWaitForFileSystemToSettleDown();
+
+            var bulkFtpCopyManager = new BulkFtpCopyManager();
+            System.Diagnostics.Debug.WriteLine("Calling bulkFtpCopyManager.CopyFiles...");
+            await bulkFtpCopyManager.CopyFiles(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
+            System.Diagnostics.Debug.WriteLine("Returned from bulkFtpCopyManager.CopyFiles");
+
+            // Assert
+            FudgedWaitForFileSystemToSettleDown();
             AssertFilesHaveBeenCopiedCorrectly(fileNames, sourceDirectoryUncPath, targetDirectoryUncPaths);
         }
 
@@ -50,6 +96,11 @@ namespace TplTests
             {
                 DeleteAllFilesInDirectory(directory);
             }
+        }
+
+        private static void FudgedWaitForFileSystemToSettleDown()
+        {
+            System.Threading.Thread.Sleep(2 * 1000);
         }
 
         private static void DeleteAllFilesInDirectory(string directory)
@@ -92,6 +143,8 @@ namespace TplTests
 
         public async Task CopyFiles(IEnumerable<string> fileNames, string sourceDirectory, IList<string> targetDirectories)
         {
+            var tasks = new List<Task>();
+
             foreach (var fileName in fileNames)
             {
                 var downloadFtpWebRequest = CreateFtpWebRequest(sourceDirectory, fileName, WebRequestMethods.Ftp.DownloadFile);
@@ -104,24 +157,41 @@ namespace TplTests
                         await downloadResponseStream.CopyToAsync(destination);
                         System.Diagnostics.Debug.WriteLine("Done copying download response stream");
 
+                        var buffer = destination.ToArray();
+                        destination.Close();
+                        System.Diagnostics.Debug.WriteLine("buffer.Length: {0}", buffer.Length);
+
                         foreach (var targetDirectory in targetDirectories)
                         {
+                            var localCopyOfTargetDirectory = targetDirectory;
+                            Stream requestStream = null;
                             var uploadFtpWebRequest = CreateFtpWebRequest(targetDirectory, fileName, WebRequestMethods.Ftp.UploadFile);
-                            using (var uploadRequestStream = await uploadFtpWebRequest.GetRequestStreamAsync())
-                            {
-                                destination.Seek(0, SeekOrigin.Begin);
-                                System.Diagnostics.Debug.WriteLine("destination.Length: {0}", destination.Length);
-
-                                System.Diagnostics.Debug.WriteLine("Starting to copy upload request stream...");
-                                await destination.CopyToAsync(uploadRequestStream);
-                                System.Diagnostics.Debug.WriteLine("Done copying upload request stream");
-
-                                await uploadFtpWebRequest.GetResponseAsync();
-                            }
+                            var uploadTask = uploadFtpWebRequest.GetRequestStreamAsync();
+                            var overallUploadTask = uploadTask
+                                .ContinueWith(t =>
+                                    {
+                                        requestStream = t.Result;
+                                        System.Diagnostics.Debug.WriteLine(string.Format("Starting to copy upload request stream... ({0})", localCopyOfTargetDirectory));
+                                        var bufferStream = new MemoryStream(buffer);
+                                        var copyToAsyncTask = bufferStream.CopyToAsync(requestStream);
+                                        System.Diagnostics.Debug.WriteLine(string.Format("Done copying upload request stream ({0})", localCopyOfTargetDirectory));
+                                        return copyToAsyncTask;
+                                    }).ContinueWith(t =>
+                                        {
+                                            if (requestStream != null)
+                                            {
+                                                requestStream.Close();
+                                                return uploadFtpWebRequest.GetRequestStreamAsync();
+                                            }
+                                            return Task<Stream>.Factory.StartNew(() => null);
+                                        });
+                            tasks.Add(overallUploadTask);
                         }
                     }
                 }
             }
+
+            await Task.WhenAll(tasks);
         }
 
         private static FtpWebRequest CreateFtpWebRequest(string directory, string fileName, string method)
