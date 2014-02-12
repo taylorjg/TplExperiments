@@ -46,7 +46,7 @@ namespace TplTests
             var bulkFtpCopyManager = new BulkFtpCopyManager();
 
             MyDebug.Log("Calling bulkFtpCopyManager.CopyFiles...");
-            await bulkFtpCopyManager.CopyFiles2(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
+            await bulkFtpCopyManager.CopyFiles3(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
             MyDebug.Log("Returned from bulkFtpCopyManager.CopyFiles");
 
             // Assert
@@ -79,11 +79,22 @@ namespace TplTests
             var bulkFtpCopyManager = new BulkFtpCopyManager();
 
             MyDebug.Log("Calling bulkFtpCopyManager.CopyFiles...");
-            await bulkFtpCopyManager.CopyFiles2(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
+            await bulkFtpCopyManager.CopyFiles3(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
             MyDebug.Log("Returned from bulkFtpCopyManager.CopyFiles");
 
             // Assert
             AssertFilesHaveBeenCopiedCorrectly(fileNames, sourceDirectoryUncPath, targetDirectoryUncPaths);
+        }
+
+        [Test]
+        public void CallingContinueWithMultipleTimes()
+        {
+            var startingTask = new Task(() => MyDebug.Log("Inside starting task"));
+            var c1 = startingTask.ContinueWith(_ => MyDebug.Log("Inside first continuation"));
+            var c2 = startingTask.ContinueWith(_ => MyDebug.Log("Inside second continuation"));
+            var c3 = startingTask.ContinueWith(_ => MyDebug.Log("Inside third continuation"));
+            startingTask.Start();
+            Task.WhenAll(c1, c2, c3).Wait();
         }
 
         private static void DeleteAllFilesInDirectories(IEnumerable<string> directories)
@@ -151,6 +162,7 @@ namespace TplTests
             public Stream RequestStream { get; set; }
         }
 
+        // ReSharper disable LoopCanBeConvertedToQuery
         public async Task CopyFiles(IEnumerable<string> fileNames, string sourceDirectory, IList<string> targetDirectories)
         {
             var tasks = new List<Task>();
@@ -165,7 +177,9 @@ namespace TplTests
                         MyDebug.Log("Starting to copy download response stream...");
                         var destinationStream = new MemoryStream();
                         var wrappedDestinationStream = new StreamWrapper(destinationStream, sourceDirectory, fileName);
+                        // ReSharper disable PossibleNullReferenceException
                         await downloadResponseStream.CopyToAsync(wrappedDestinationStream);
+                        // ReSharper restore PossibleNullReferenceException
                         MyDebug.Log("Done copying download response stream");
 
                         var buffer = destinationStream.ToArray();
@@ -218,6 +232,7 @@ namespace TplTests
 
             await Task.WhenAll(tasks);
         }
+        // ReSharper restore LoopCanBeConvertedToQuery
 
         private class FileCopyState
         {
@@ -249,7 +264,9 @@ namespace TplTests
                 DownloadResponseStream = DownloadFtpWebResponse.GetResponseStream();
                 DownloadDestinationStream = new MemoryStream();
                 WrappedDownloadDestinationStream = new StreamWrapper(DownloadDestinationStream, SourceDirectory, FileName);
+                // ReSharper disable PossibleNullReferenceException
                 return DownloadResponseStream.CopyToAsync(WrappedDownloadDestinationStream);
+                // ReSharper restore PossibleNullReferenceException
             }
 
             public Task<Stream> StartFtpUpload()
@@ -286,6 +303,7 @@ namespace TplTests
             }
         }
 
+        // ReSharper disable LoopCanBeConvertedToQuery
         public async Task CopyFiles2(IEnumerable<string> fileNames, string sourceDirectory, IList<string> targetDirectories)
         {
             var tasks = new List<Task>();
@@ -332,6 +350,7 @@ namespace TplTests
 
             await Task.WhenAll(tasks);
         }
+        // ReSharper restore LoopCanBeConvertedToQuery
 
         private class WareHouse
         {
@@ -351,7 +370,7 @@ namespace TplTests
                     _startingTasks.Add(startingTask);
                 }
 
-                var finalTask = wareHouseData.EnqueueCopyOperation(targetDirectory, fileName);
+                var finalTask = wareHouseData.EnqueueCopyOperation(targetDirectory);
                 _finalTasks.Add(finalTask);
             }
 
@@ -370,38 +389,147 @@ namespace TplTests
 
             private class WareHouseData
             {
+                private class FileDownloadState
+                {
+                    public FileDownloadState(string sourceDirectory, string fileName)
+                    {
+                        SourceDirectory = sourceDirectory;
+                        FileName = fileName;
+                    }
+
+                    public string FileName { get; private set; }
+                    public Byte[] Buffer { get; private set; }
+
+                    private string SourceDirectory { get; set; }
+                    private FtpWebRequest DownloadFtpWebRequest { get; set; }
+                    private FtpWebResponse DownloadFtpWebResponse { get; set; }
+                    private Stream DownloadResponseStream { get; set; }
+                    private MemoryStream DownloadDestinationStream { get; set; }
+                    private Stream WrappedDownloadDestinationStream { get; set; }
+
+                    public Task<WebResponse> StartFtpDownload()
+                    {
+                        MyDebug.Log("StartFtpDownload - SourceDirectory: {0}; FileName: {1}", SourceDirectory, FileName);
+                        DownloadFtpWebRequest = CreateFtpWebRequest(SourceDirectory, FileName, WebRequestMethods.Ftp.DownloadFile);
+                        return DownloadFtpWebRequest.GetResponseAsync();
+                    }
+
+                    public Task ReadDownloadResponseStream(FtpWebResponse ftpWebResponse)
+                    {
+                        MyDebug.Log("ReadDownloadResponseStream - SourceDirectory: {0}; FileName: {1}", SourceDirectory, FileName);
+                        DownloadFtpWebResponse = ftpWebResponse;
+                        DownloadResponseStream = DownloadFtpWebResponse.GetResponseStream();
+                        DownloadDestinationStream = new MemoryStream();
+                        WrappedDownloadDestinationStream = new StreamWrapper(DownloadDestinationStream, SourceDirectory, FileName);
+                        // ReSharper disable PossibleNullReferenceException
+                        return DownloadResponseStream.CopyToAsync(WrappedDownloadDestinationStream);
+                        // ReSharper restore PossibleNullReferenceException
+                    }
+
+                    public void Cleanup()
+                    {
+                        MyDebug.Log("Cleanup - SourceDirectory: {0}; FileName: {1}", SourceDirectory, FileName);
+                        WrappedDownloadDestinationStream.Close();
+                        Buffer = DownloadDestinationStream.ToArray();
+                        DownloadFtpWebResponse.Close();
+                    }
+                }
+
+                private class FileUploadState
+                {
+                    public FileUploadState(FileDownloadState fileDownloadState, string targetDirectory)
+                    {
+                        FileDownloadState = fileDownloadState;
+                        TargetDirectory = targetDirectory;
+                    }
+
+                    private FileDownloadState FileDownloadState { get; set; }
+                    private string TargetDirectory { get; set; }
+                    private FtpWebRequest UploadFtpWebRequest { get; set; }
+                    private FtpWebResponse UploadFtpWebResponse { get; set; }
+                    private Stream WrappedUploadRequestStream { get; set; }
+                    private Stream UploadSourceStream { get; set; }
+
+                    public Task<Stream> StartFtpUpload()
+                    {
+                        MyDebug.Log("StartFtpUpload - TargetDirectory: {0}; FileName: {1}", TargetDirectory, FileDownloadState.FileName);
+                        UploadFtpWebRequest = CreateFtpWebRequest(TargetDirectory, FileDownloadState.FileName, WebRequestMethods.Ftp.UploadFile);
+                        return UploadFtpWebRequest.GetRequestStreamAsync();
+                    }
+
+                    public Task WriteUploadRequestStream(Stream uploadRequestStream)
+                    {
+                        MyDebug.Log("WriteUploadRequestStream - TargetDirectory: {0}; FileName: {1}", TargetDirectory, FileDownloadState.FileName);
+                        WrappedUploadRequestStream = new StreamWrapper(uploadRequestStream, TargetDirectory, FileDownloadState.FileName);
+                        UploadSourceStream = new MemoryStream(FileDownloadState.Buffer);
+                        return UploadSourceStream.CopyToAsync(WrappedUploadRequestStream);
+                    }
+
+                    public Task<WebResponse> FinishFtpUpload()
+                    {
+                        MyDebug.Log("FinishFtpUpload - TargetDirectory: {0}; FileName: {1}", TargetDirectory, FileDownloadState.FileName);
+                        return UploadFtpWebRequest.GetResponseAsync();
+                    }
+
+                    public void Cleanup(FtpWebResponse ftpWebResponse)
+                    {
+                        MyDebug.Log("Cleanup - TargetDirectory: {0}; FileName: {1}", TargetDirectory, FileDownloadState.FileName);
+                        WrappedUploadRequestStream.Close();
+                        UploadSourceStream.Close();
+                        UploadFtpWebResponse = ftpWebResponse;
+                        UploadFtpWebResponse.Close();
+                    }
+                }
+
                 public Task CreateStartingTask(string sourceDirectory, string fileName)
                 {
                     _startingTask = new Task(NoOperation);
 
+                    _fileDownloadState = new FileDownloadState(sourceDirectory, fileName);
+
                     _lastDownloadTask = _startingTask
-                        .ContinueWith(_ =>
+                        .ContinueWith((_, s) =>
                             {
-                                // Start the async FtpWebRequest DownloadFile operation...
-                            }).ContinueWith(_ =>
+                                var state = (FileDownloadState)s;
+                                return state.StartFtpDownload();
+                            }, _fileDownloadState).Unwrap().ContinueWith((t, s) =>
                                 {
-                                    // Next step...
-                                }).ContinueWith(_ =>
+                                    var state = (FileDownloadState)s;
+                                    var ftpWebResponse = (FtpWebResponse)t.Result;
+                                    return state.ReadDownloadResponseStream(ftpWebResponse);
+                                }, _fileDownloadState).Unwrap().ContinueWith((_, s) =>
                                     {
-                                        // Next step...
-                                    });
+                                        var state = (FileDownloadState)s;
+                                        state.Cleanup();
+                                    }, _fileDownloadState);
 
                     return _startingTask;
                 }
 
-                public Task EnqueueCopyOperation(string targetDirectory, string fileName)
+                public Task EnqueueCopyOperation(string targetDirectory)
                 {
+                    var fileUploadState = new FileUploadState(_fileDownloadState, targetDirectory);
+
                     var lastUploadTask = _lastDownloadTask
-                        .ContinueWith(_ =>
+                        .ContinueWith((_, s) =>
                             {
-                                // Start the async FtpWebRequest UploadFile operation...
-                            }).ContinueWith(_ =>
+                                var state = (FileUploadState) s;
+                                return state.StartFtpUpload();
+                            }, fileUploadState).Unwrap().ContinueWith((t, s) =>
                                 {
-                                    // Next step...
-                                }).ContinueWith(_ =>
+                                    var state = (FileUploadState) s;
+                                    var requestStream = t.Result;
+                                    return state.WriteUploadRequestStream(requestStream);
+                                }, fileUploadState).Unwrap().ContinueWith((_, s) =>
                                     {
-                                        // Next step...
-                                    });
+                                        var state = (FileUploadState) s;
+                                        return state.FinishFtpUpload();
+                                    }, fileUploadState).Unwrap().ContinueWith((t, s) =>
+                                        {
+                                            var state = (FileUploadState)s;
+                                            var ftpWebResponse = (FtpWebResponse)t.Result;
+                                            state.Cleanup(ftpWebResponse);
+                                        }, fileUploadState);
 
                     return lastUploadTask;
                 }
@@ -411,6 +539,7 @@ namespace TplTests
                 }
 
                 private Task _startingTask;
+                private FileDownloadState _fileDownloadState;
                 private Task _lastDownloadTask;
             }
 
@@ -422,6 +551,8 @@ namespace TplTests
 
         public async Task CopyFiles3(IList<string> fileNames, string sourceDirectory, IList<string> targetDirectories)
         {
+            MyDebug.Log("Entering CopyFiles3");
+
             var wareHouse = new WareHouse(sourceDirectory);
 
             foreach (var targetDirectory in targetDirectories)
@@ -432,25 +563,14 @@ namespace TplTests
                 }
             }
 
+            MyDebug.Log("Calling wareHouse.StartCopyOperations");
             wareHouse.StartCopyOperations();
+
+            MyDebug.Log("Calling wareHouse.WaitForCopyOperationsToComplete");
             await wareHouse.WaitForCopyOperationsToComplete();
+
+            MyDebug.Log("Leaving CopyFiles3");
         }
-
-        // ask the warehouse to copy this file please
-        //  lookup file in dictionary
-        //  if entry is not found then
-        //      create an unstarted wrapper task around a download task
-        //                  private static void NoOp(){}
-        //                  var task = new Task(NoOp).ContinueWith(t => {
-        //                      // start the download task here...
-        //                  });
-        //  endif
-        //  add another upload continuation => add the final task in the hierarchy to a list of outstanding tasks
-
-        // start all wrappers tasks
-        // wait for all outstanding tasks to complete
-
-        // http://stackoverflow.com/questions/15143948/create-but-not-start-a-task-with-a-custom-task-factory
 
         private static FtpWebRequest CreateFtpWebRequest(string directory, string fileName, string method)
         {
