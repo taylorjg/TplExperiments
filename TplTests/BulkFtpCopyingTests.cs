@@ -333,6 +333,125 @@ namespace TplTests
             await Task.WhenAll(tasks);
         }
 
+        private class WareHouse
+        {
+            public WareHouse(string sourceDirectory)
+            {
+                _sourceDirectory = sourceDirectory;
+            }
+
+            public void EnqueueCopyOperation(string targetDirectory, string fileName)
+            {
+                WareHouseData wareHouseData;
+                if (!_dictionary.TryGetValue(fileName, out wareHouseData))
+                {
+                    wareHouseData = new WareHouseData();
+                    _dictionary.Add(fileName, wareHouseData);
+                    var startingTask = wareHouseData.CreateStartingTask(_sourceDirectory, fileName);
+                    _startingTasks.Add(startingTask);
+                }
+
+                var finalTask = wareHouseData.EnqueueCopyOperation(targetDirectory, fileName);
+                _finalTasks.Add(finalTask);
+            }
+
+            public void StartCopyOperations()
+            {
+                foreach (var task in _startingTasks)
+                {
+                    task.Start();
+                }
+            }
+
+            public async Task WaitForCopyOperationsToComplete()
+            {
+                await Task.WhenAll(_finalTasks);
+            }
+
+            private class WareHouseData
+            {
+                public Task CreateStartingTask(string sourceDirectory, string fileName)
+                {
+                    _startingTask = new Task(NoOperation);
+
+                    _lastDownloadTask = _startingTask
+                        .ContinueWith(_ =>
+                            {
+                                // Start the async FtpWebRequest DownloadFile operation...
+                            }).ContinueWith(_ =>
+                                {
+                                    // Next step...
+                                }).ContinueWith(_ =>
+                                    {
+                                        // Next step...
+                                    });
+
+                    return _startingTask;
+                }
+
+                public Task EnqueueCopyOperation(string targetDirectory, string fileName)
+                {
+                    var lastUploadTask = _lastDownloadTask
+                        .ContinueWith(_ =>
+                            {
+                                // Start the async FtpWebRequest UploadFile operation...
+                            }).ContinueWith(_ =>
+                                {
+                                    // Next step...
+                                }).ContinueWith(_ =>
+                                    {
+                                        // Next step...
+                                    });
+
+                    return lastUploadTask;
+                }
+
+                private static void NoOperation()
+                {
+                }
+
+                private Task _startingTask;
+                private Task _lastDownloadTask;
+            }
+
+            private readonly string _sourceDirectory;
+            private readonly IDictionary<string, WareHouseData> _dictionary = new Dictionary<string, WareHouseData>();
+            private readonly IList<Task> _startingTasks = new List<Task>();
+            private readonly IList<Task> _finalTasks = new List<Task>();
+        }
+
+        public async Task CopyFiles3(IList<string> fileNames, string sourceDirectory, IList<string> targetDirectories)
+        {
+            var wareHouse = new WareHouse(sourceDirectory);
+
+            foreach (var targetDirectory in targetDirectories)
+            {
+                foreach (var fileName in fileNames)
+                {
+                    wareHouse.EnqueueCopyOperation(targetDirectory, fileName);
+                }
+            }
+
+            wareHouse.StartCopyOperations();
+            await wareHouse.WaitForCopyOperationsToComplete();
+        }
+
+        // ask the warehouse to copy this file please
+        //  lookup file in dictionary
+        //  if entry is not found then
+        //      create an unstarted wrapper task around a download task
+        //                  private static void NoOp(){}
+        //                  var task = new Task(NoOp).ContinueWith(t => {
+        //                      // start the download task here...
+        //                  });
+        //  endif
+        //  add another upload continuation => add the final task in the hierarchy to a list of outstanding tasks
+
+        // start all wrappers tasks
+        // wait for all outstanding tasks to complete
+
+        // http://stackoverflow.com/questions/15143948/create-but-not-start-a-task-with-a-custom-task-factory
+
         private static FtpWebRequest CreateFtpWebRequest(string directory, string fileName, string method)
         {
             var uri = string.Format("ftp://{0}/{1}/{2}", FtpHostName, directory, fileName);
