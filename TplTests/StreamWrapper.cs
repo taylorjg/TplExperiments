@@ -12,7 +12,7 @@ namespace TplTests
         public StreamWrapper(Stream innerStream, string directory, string fileName)
         {
             _innerStream = innerStream;
-            _path = Path.Combine(directory, fileName);
+            _path = directory + "/" + fileName;
         }
 
         public override void Flush()
@@ -221,7 +221,7 @@ namespace TplTests
         {
             var message = string.Format(format, args);
             message += string.Format(" ({0})", _path);
-            System.Diagnostics.Debug.WriteLine(message);
+            MyDebug.Log(message);
         }
     }
 }
