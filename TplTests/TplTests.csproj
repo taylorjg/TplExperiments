@@ -55,6 +55,7 @@
     <Compile Include="FromAsyncTests.cs" />
     <Compile Include="ContinuationTests.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="StreamWrapper.cs" />
     <Compile Include="UnwrapTests.cs" />
   </ItemGroup>
   <ItemGroup>

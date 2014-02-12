@@ -43,15 +43,12 @@ namespace TplTests
 
             // Act
             DeleteAllFilesInDirectories(targetDirectoryUncPaths);
-            FudgedWaitForFileSystemToSettleDown();
-
             var bulkFtpCopyManager = new BulkFtpCopyManager();
             System.Diagnostics.Debug.WriteLine("Calling bulkFtpCopyManager.CopyFiles...");
             await bulkFtpCopyManager.CopyFiles(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
             System.Diagnostics.Debug.WriteLine("Returned from bulkFtpCopyManager.CopyFiles");
 
             // Assert
-            FudgedWaitForFileSystemToSettleDown();
             AssertFilesHaveBeenCopiedCorrectly(fileNames, sourceDirectoryUncPath, targetDirectoryUncPaths);
         }
 
@@ -78,15 +75,12 @@ namespace TplTests
 
             // Act
             DeleteAllFilesInDirectories(targetDirectoryUncPaths);
-            FudgedWaitForFileSystemToSettleDown();
-
             var bulkFtpCopyManager = new BulkFtpCopyManager();
             System.Diagnostics.Debug.WriteLine("Calling bulkFtpCopyManager.CopyFiles...");
             await bulkFtpCopyManager.CopyFiles(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
             System.Diagnostics.Debug.WriteLine("Returned from bulkFtpCopyManager.CopyFiles");
 
             // Assert
-            FudgedWaitForFileSystemToSettleDown();
             AssertFilesHaveBeenCopiedCorrectly(fileNames, sourceDirectoryUncPath, targetDirectoryUncPaths);
         }
 
@@ -96,11 +90,8 @@ namespace TplTests
             {
                 DeleteAllFilesInDirectory(directory);
             }
-        }
 
-        private static void FudgedWaitForFileSystemToSettleDown()
-        {
-            System.Threading.Thread.Sleep(2 * 1000);
+            FudgedWaitForFileSystemToSettleDown();
         }
 
         private static void DeleteAllFilesInDirectory(string directory)
@@ -114,6 +105,8 @@ namespace TplTests
 
         private static void AssertFilesHaveBeenCopiedCorrectly(string[] fileNames, string sourceDirectory, IEnumerable<string> targetDirectories)
         {
+            FudgedWaitForFileSystemToSettleDown();
+
             var dictionary = new Dictionary<string, byte[]>();
             foreach (var fileName in fileNames)
             {
@@ -133,6 +126,11 @@ namespace TplTests
                 }
             }
         }
+
+        private static void FudgedWaitForFileSystemToSettleDown()
+        {
+            System.Threading.Thread.Sleep(5 * 1000);
+        }
     }
 
     internal class BulkFtpCopyManager
@@ -144,6 +142,7 @@ namespace TplTests
         private class UploadState
         {
             public string TargetDirectory { get; set; }
+            public string FileName { get; set; }
             public FtpWebRequest FtpWebRequest { get; set; }
             public FtpWebResponse FtpWebResponse { get; set; }
             public Stream BufferStream { get; set; }
@@ -162,12 +161,13 @@ namespace TplTests
                     using (var downloadResponseStream = downloadFtpWebResponse.GetResponseStream())
                     {
                         System.Diagnostics.Debug.WriteLine("Starting to copy download response stream...");
-                        var destination = new MemoryStream();
-                        await downloadResponseStream.CopyToAsync(destination);
+                        var destinationStream = new MemoryStream();
+                        var wrappedDestinationStream = new StreamWrapper(destinationStream, sourceDirectory, fileName);
+                        await downloadResponseStream.CopyToAsync(wrappedDestinationStream);
                         System.Diagnostics.Debug.WriteLine("Done copying download response stream");
 
-                        var buffer = destination.ToArray();
-                        destination.Close();
+                        var buffer = destinationStream.ToArray();
+                        wrappedDestinationStream.Close();
                         System.Diagnostics.Debug.WriteLine("buffer.Length: {0}", buffer.Length);
 
                         foreach (var targetDirectory in targetDirectories)
@@ -177,32 +177,52 @@ namespace TplTests
                             var uploadState1 = new UploadState
                                 {
                                     TargetDirectory = targetDirectory,
+                                    FileName = fileName,
                                     FtpWebRequest = uploadFtpWebRequest
                                 };
                             var overallUploadTask = uploadTask
                                 .ContinueWith((t, s) =>
                                     {
                                         var uploadState2 = (UploadState) s;
-                                        uploadState2.RequestStream = t.Result;
+                                        uploadState2.RequestStream = new StreamWrapper(t.Result, uploadState2.TargetDirectory, uploadState2.FileName);
                                         uploadState2.BufferStream = new MemoryStream(buffer);
                                         System.Diagnostics.Debug.WriteLine(string.Format("Starting to copy upload request stream... ({0})", uploadState2.TargetDirectory));
                                         var copyToAsyncTask = uploadState2.BufferStream.CopyToAsync(uploadState2.RequestStream);
                                         return copyToAsyncTask;
                                     }, uploadState1).ContinueWith((t, s) =>
                                         {
-                                            var uploadState3 = (UploadState)s;
+                                            var uploadState3 = (UploadState) s;
                                             System.Diagnostics.Debug.WriteLine(string.Format("Done copying upload request stream ({0})", uploadState3.TargetDirectory));
                                             if (uploadState3.RequestStream != null)
                                             {
                                                 uploadState3.RequestStream.Close();
-                                                return uploadState3.FtpWebRequest.GetRequestStreamAsync();
+                                                uploadState3.BufferStream.Close();
+                                                System.Diagnostics.Debug.WriteLine(string.Format("Starting to get upload response stream... ({0})", uploadState3.TargetDirectory));
+                                                return uploadState3.FtpWebRequest.GetResponseAsync();
                                             }
-                                            return Task<Stream>.Factory.StartNew(() => null);
-                                        }, uploadState1);
+                                            return Task<WebResponse>.Factory.StartNew(() => null);
+                                        }, uploadState1).Unwrap().ContinueWith((t, s) =>
+                                            {
+                                                var uploadState4 = (UploadState) s;
+                                                System.Diagnostics.Debug.WriteLine(string.Format("Done getting upload response stream ({0})", uploadState4.TargetDirectory));
+                                                uploadState4.FtpWebResponse = (FtpWebResponse) t.Result;
+                                                uploadState4.FtpWebResponse.Close();
+                                            }, uploadState1);
                             tasks.Add(overallUploadTask);
                         }
                     }
                 }
+            }
+
+            await Task.WhenAll(tasks);
+        }
+
+        public async Task CopyFiles2(IEnumerable<string> fileNames, string sourceDirectory, IList<string> targetDirectories)
+        {
+            var tasks = new List<Task>();
+
+            foreach (var fileName in fileNames)
+            {
             }
 
             await Task.WhenAll(tasks);
