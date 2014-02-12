@@ -45,7 +45,8 @@ namespace TplTests
             DeleteAllFilesInDirectories(targetDirectoryUncPaths);
             var bulkFtpCopyManager = new BulkFtpCopyManager();
             System.Diagnostics.Debug.WriteLine("Calling bulkFtpCopyManager.CopyFiles...");
-            await bulkFtpCopyManager.CopyFiles(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
+            //await bulkFtpCopyManager.CopyFiles(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
+            await bulkFtpCopyManager.CopyFiles2(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
             System.Diagnostics.Debug.WriteLine("Returned from bulkFtpCopyManager.CopyFiles");
 
             // Assert
@@ -217,12 +218,115 @@ namespace TplTests
             await Task.WhenAll(tasks);
         }
 
+        private class FileCopyState
+        {
+            public string SourceDirectory { private get; set; }
+            public string TargetDirectory { private get; set; }
+            public string FileName { private get; set; }
+            private FtpWebRequest DownloadFtpWebRequest { get; set; }
+            private FtpWebResponse DownloadFtpWebResponse { get; set; }
+            private FtpWebRequest UploadFtpWebRequest { get; set; }
+            private FtpWebResponse UploadFtpWebResponse { get; set; }
+            private Stream DownloadResponseStream { get; set; }
+            private MemoryStream DownloadDestinationStream { get; set; }
+            private Stream WrappedDownloadDestinationStream { get; set; }
+            private Byte[] Buffer { get; set; }
+            private Stream WrappedUploadRequestStream { get; set; }
+            private Stream UploadSourceStream { get; set; }
+
+            public Task<WebResponse> StartFtpDownload()
+            {
+                System.Diagnostics.Debug.WriteLine("StartFtpDownload - SourceDirectory: {0}; FileName: {1}", SourceDirectory, FileName);
+                DownloadFtpWebRequest = CreateFtpWebRequest(SourceDirectory, FileName, WebRequestMethods.Ftp.DownloadFile);
+                return DownloadFtpWebRequest.GetResponseAsync();
+            }
+
+            public Task ReadDownloadResponseStream(FtpWebResponse ftpWebResponse)
+            {
+                System.Diagnostics.Debug.WriteLine("ReadDownloadResponseStream - SourceDirectory: {0}; FileName: {1}", SourceDirectory, FileName);
+                DownloadFtpWebResponse = ftpWebResponse;
+                DownloadResponseStream = DownloadFtpWebResponse.GetResponseStream();
+                DownloadDestinationStream = new MemoryStream();
+                WrappedDownloadDestinationStream = new StreamWrapper(DownloadDestinationStream, SourceDirectory, FileName);
+                return DownloadResponseStream.CopyToAsync(WrappedDownloadDestinationStream);
+            }
+
+            public Task<Stream> StartFtpUpload()
+            {
+                System.Diagnostics.Debug.WriteLine("StartFtpUpload - TargetDirectory: {0}; FileName: {1}", TargetDirectory, FileName);
+                WrappedDownloadDestinationStream.Close();
+                Buffer = DownloadDestinationStream.ToArray();
+                DownloadFtpWebResponse.Close();
+                UploadFtpWebRequest = CreateFtpWebRequest(TargetDirectory, FileName, WebRequestMethods.Ftp.UploadFile);
+                return UploadFtpWebRequest.GetRequestStreamAsync();
+            }
+
+            public Task WriteUploadRequestStream(Stream uploadRequestStream)
+            {
+                System.Diagnostics.Debug.WriteLine("WriteUploadRequestStream - TargetDirectory: {0}; FileName: {1}", TargetDirectory, FileName);
+                WrappedUploadRequestStream = new StreamWrapper(uploadRequestStream, TargetDirectory, FileName);
+                UploadSourceStream = new MemoryStream(Buffer);
+                return UploadSourceStream.CopyToAsync(WrappedUploadRequestStream);
+            }
+
+            public Task<WebResponse> FinishFtpUpload()
+            {
+                System.Diagnostics.Debug.WriteLine("FinishFtpUpload - TargetDirectory: {0}; FileName: {1}", TargetDirectory, FileName);
+                return UploadFtpWebRequest.GetResponseAsync();
+            }
+
+            public void Cleanup(FtpWebResponse ftpWebResponse)
+            {
+                System.Diagnostics.Debug.WriteLine("Cleanup - TargetDirectory: {0}; FileName: {1}", TargetDirectory, FileName);
+                WrappedUploadRequestStream.Close();
+                UploadSourceStream.Close();
+                UploadFtpWebResponse = ftpWebResponse;
+                UploadFtpWebResponse.Close();
+            }
+        }
+
         public async Task CopyFiles2(IEnumerable<string> fileNames, string sourceDirectory, IList<string> targetDirectories)
         {
             var tasks = new List<Task>();
 
             foreach (var fileName in fileNames)
             {
+                foreach (var targetDirectory in targetDirectories)
+                {
+                    var fileCopyState = new FileCopyState
+                        {
+                            SourceDirectory = sourceDirectory,
+                            TargetDirectory = targetDirectory,
+                            FileName = fileName
+                        };
+
+                    var task = fileCopyState.StartFtpDownload().ContinueWith((t, s) =>
+                        {
+                            var state = (FileCopyState) s;
+                            var downloadFtpWebResponse = (FtpWebResponse) t.Result;
+                            return state.ReadDownloadResponseStream(downloadFtpWebResponse);
+                        }, fileCopyState).Unwrap().ContinueWith((t, s) =>
+                            {
+                                var state = (FileCopyState) s;
+                                return state.StartFtpUpload();
+                            }, fileCopyState).Unwrap().ContinueWith((t, s) =>
+                                {
+                                    var state = (FileCopyState) s;
+                                    var uploadRequestStream = t.Result;
+                                    return state.WriteUploadRequestStream(uploadRequestStream);
+                                }, fileCopyState).Unwrap().ContinueWith((t, s) =>
+                                    {
+                                        var state = (FileCopyState)s;
+                                        return state.FinishFtpUpload();
+                                    }, fileCopyState).Unwrap().ContinueWith((t, s) =>
+                                        {
+                                            var state = (FileCopyState)s;
+                                            var uploadFtpWebResponse = (FtpWebResponse)t.Result;
+                                            state.Cleanup(uploadFtpWebResponse);
+                                        }, fileCopyState);
+
+                    tasks.Add(task);
+                }
             }
 
             await Task.WhenAll(tasks);
