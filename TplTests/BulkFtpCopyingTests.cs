@@ -140,17 +140,6 @@ namespace TplTests
             AssertFilesHaveBeenCopiedCorrectly(fileNames, sourceDirectoryUncPath, targetDirectoryUncPaths);
         }
 
-        [Test]
-        public void CallingContinueWithMultipleTimes()
-        {
-            var startingTask = new Task(() => MyDebug.Log("Inside starting task"));
-            var c1 = startingTask.ContinueWith(_ => MyDebug.Log("Inside first continuation"));
-            var c2 = startingTask.ContinueWith(_ => MyDebug.Log("Inside second continuation"));
-            var c3 = startingTask.ContinueWith(_ => MyDebug.Log("Inside third continuation"));
-            startingTask.Start();
-            Task.WhenAll(c1, c2, c3).Wait();
-        }
-
         private static void DeleteAllFilesInDirectories(IEnumerable<string> directories)
         {
             foreach (var directory in directories)
