@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Threading.Tasks;
 using NUnit.Framework;
 
 namespace TplTests
@@ -11,7 +10,11 @@ namespace TplTests
     [TestFixture]
     internal class BulkFtpCopyingTests
     {
-        private static readonly Tuple<string, string> SourceDirectoryPair = Tuple.Create (@"LoopMonTest/SourceDir",  @"\\10.10.201.134\e$\HostEnvironments\LoopMonTest\SourceDir");
+        private const string FtpHostName = "10.10.201.134";
+        private const string FtpUserName = "env6ftp";
+        private const string FtpPasssword = "w1nd0w5.";
+
+        private static readonly Tuple<string, string> SourceDirectoryPair = Tuple.Create(@"LoopMonTest/SourceDir", @"\\10.10.201.134\e$\HostEnvironments\LoopMonTest\SourceDir");
         private static readonly Tuple<string, string> TargetDirectoryPair1 = Tuple.Create(@"LoopMonTest/TargetDir1", @"\\10.10.201.134\e$\HostEnvironments\LoopMonTest\TargetDir1");
         private static readonly Tuple<string, string> TargetDirectoryPair2 = Tuple.Create(@"LoopMonTest/TargetDir2", @"\\10.10.201.134\e$\HostEnvironments\LoopMonTest\TargetDir2");
         private static readonly Tuple<string, string> TargetDirectoryPair3 = Tuple.Create(@"LoopMonTest/TargetDir3", @"\\10.10.201.134\e$\HostEnvironments\LoopMonTest\TargetDir3");
@@ -37,22 +40,22 @@ namespace TplTests
                     "combined_Master_F217307845EECA800B75936A37BCA697.js"
                 };
 
-            var sourceDirectoryFtpPath = SourceDirectoryPair.Item1;
+            var sourceBaseUri = MakeBaseUri(SourceDirectoryPair.Item1);
             var sourceDirectoryUncPath = SourceDirectoryPair.Item2;
 
             var targetDirectoryPairs = new[]
                 {
                     TargetDirectoryPair1
                 };
-            var targetDirectoryFtpPaths = targetDirectoryPairs.Select(x => x.Item1).ToList();
+            var targetBaseUris = targetDirectoryPairs.Select(x => MakeBaseUri(x.Item1)).ToList();
             var targetDirectoryUncPaths = targetDirectoryPairs.Select(x => x.Item2).ToList();
 
             // Act
             DeleteAllFilesInDirectories(targetDirectoryUncPaths);
-            var bulkFtpCopyManager = new BulkFtpCopyManager();
+            var bulkFtpCopyManager = new BulkFtpCopyManager(FtpUserName, FtpPasssword);
 
             MyDebug.Log("Calling bulkFtpCopyManager.CopyFiles...");
-            await bulkFtpCopyManager.CopyFiles(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
+            await bulkFtpCopyManager.CopyFiles(fileNames, sourceBaseUri, targetBaseUris);
             MyDebug.Log("Returned from bulkFtpCopyManager.CopyFiles");
 
             // Assert
@@ -68,7 +71,7 @@ namespace TplTests
                     "combined_Master_F217307845EECA800B75936A37BCA697.js"
                 };
 
-            var sourceDirectoryFtpPath = SourceDirectoryPair.Item1;
+            var sourceBaseUri = MakeBaseUri(SourceDirectoryPair.Item1);
             var sourceDirectoryUncPath = SourceDirectoryPair.Item2;
 
             var targetDirectoryPairs = new[]
@@ -77,15 +80,15 @@ namespace TplTests
                     TargetDirectoryPair2,
                     TargetDirectoryPair3
                 };
-            var targetDirectoryFtpPaths = targetDirectoryPairs.Select(x => x.Item1).ToList();
+            var targetBaseUris = targetDirectoryPairs.Select(x => MakeBaseUri(x.Item1)).ToList();
             var targetDirectoryUncPaths = targetDirectoryPairs.Select(x => x.Item2).ToList();
 
             // Act
             DeleteAllFilesInDirectories(targetDirectoryUncPaths);
-            var bulkFtpCopyManager = new BulkFtpCopyManager();
+            var bulkFtpCopyManager = new BulkFtpCopyManager(FtpUserName, FtpPasssword);
 
             MyDebug.Log("Calling bulkFtpCopyManager.CopyFiles...");
-            await bulkFtpCopyManager.CopyFiles(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
+            await bulkFtpCopyManager.CopyFiles(fileNames, sourceBaseUri, targetBaseUris);
             MyDebug.Log("Returned from bulkFtpCopyManager.CopyFiles");
 
             // Assert
@@ -110,7 +113,7 @@ namespace TplTests
                     "combined_Master_F217307845EECA800B75936A37BCA697.js"
                 };
 
-            var sourceDirectoryFtpPath = SourceDirectoryPair.Item1;
+            var sourceBaseUri = MakeBaseUri(SourceDirectoryPair.Item1);
             var sourceDirectoryUncPath = SourceDirectoryPair.Item2;
 
             var targetDirectoryPairs = new[]
@@ -123,17 +126,17 @@ namespace TplTests
                     TargetDirectoryPair6,
                     TargetDirectoryPair7,
                     TargetDirectoryPair8,
-                    TargetDirectoryPair9,
+                    TargetDirectoryPair9
                 };
-            var targetDirectoryFtpPaths = targetDirectoryPairs.Select(x => x.Item1).ToList();
+            var targetBaseUris = targetDirectoryPairs.Select(x => MakeBaseUri(x.Item1)).ToList();
             var targetDirectoryUncPaths = targetDirectoryPairs.Select(x => x.Item2).ToList();
 
             // Act
             DeleteAllFilesInDirectories(targetDirectoryUncPaths);
-            var bulkFtpCopyManager = new BulkFtpCopyManager();
+            var bulkFtpCopyManager = new BulkFtpCopyManager(FtpUserName, FtpPasssword);
 
             MyDebug.Log("Calling bulkFtpCopyManager.CopyFiles...");
-            await bulkFtpCopyManager.CopyFiles(fileNames, sourceDirectoryFtpPath, targetDirectoryFtpPaths);
+            await bulkFtpCopyManager.CopyFiles(fileNames, sourceBaseUri, targetBaseUris);
             MyDebug.Log("Returned from bulkFtpCopyManager.CopyFiles");
 
             // Assert
@@ -186,6 +189,11 @@ namespace TplTests
         private static void WaitForFileSystemToSettleDown()
         {
             System.Threading.Thread.Sleep(5 * 1000);
+        }
+
+        private static string MakeBaseUri(string path)
+        {
+            return string.Format("ftp://{0}/{1}", FtpHostName, path);
         }
     }
 }
