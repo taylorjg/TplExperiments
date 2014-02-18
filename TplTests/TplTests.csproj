@@ -50,14 +50,11 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AsyncAwaitTests.cs" />
-    <Compile Include="BulkFtpCopyingTests.cs" />
-    <Compile Include="BulkFtpCopyManager.cs" />
+    <Compile Include="CancellationTests.cs" />
     <Compile Include="FirstSteps.cs" />
     <Compile Include="FromAsyncTests.cs" />
     <Compile Include="ContinuationTests.cs" />
-    <Compile Include="MyDebug.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="StreamWrapper.cs" />
     <Compile Include="TaskStartTests.cs" />
     <Compile Include="UnwrapTests.cs" />
   </ItemGroup>
